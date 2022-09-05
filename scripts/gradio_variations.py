@@ -123,8 +123,8 @@ def run_demo(
     fn_with_model.__name__ = "fn_with_model"
 
     examples = [
-        ["assets/im-examples/vermeer.jpg", 3, 1, True, 25],
-        ["assets/im-examples/matisse.jpg", 3, 1, True, 25],
+        ["assets/vermeer.jpg", 3, 1, True, 25],
+        ["assets/matisse.jpg", 3, 1, True, 25],
     ]
 
     demo = gr.Interface(
