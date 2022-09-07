@@ -5,6 +5,7 @@ from contextlib import nullcontext
 import fire
 import numpy as np
 import torch
+from torch.nn import functional as F
 from einops import rearrange
 from omegaconf import OmegaConf
 from PIL import Image
@@ -53,11 +54,22 @@ def load_im(im_path):
     return inp*2-1
 
 @torch.no_grad()
-def sample_model(input_im, model, sampler, precision, h, w, ddim_steps, n_samples, scale, ddim_eta):
+def average_embed(embed1, embed2, weight: float = 0.5):
+    """
+    Average and normalize embeddings.
+    """
+    return F.normalize(
+        embed1 * weight + embed2 * (1 - weight)
+    )
+
+@torch.no_grad()
+def sample_model(input_im1, input_im2, model, sampler, precision, h, w, ddim_steps, n_samples, scale, ddim_eta):
     precision_scope = autocast if precision=="autocast" else nullcontext
     with precision_scope("cuda"):
         with model.ema_scope():
-            c = model.get_learned_conditioning(input_im).tile(n_samples,1,1)
+            c1 = model.get_learned_conditioning(input_im1).tile(n_samples,1,1)
+            c2 = model.get_learned_conditioning(input_im2).tile(n_samples,1,1)
+            c = average_embed(c1, c2)
 
             if scale != 1.0:
                 uc = torch.zeros_like(c)
@@ -79,7 +91,10 @@ def sample_model(input_im, model, sampler, precision, h, w, ddim_steps, n_sample
             return torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
 
 def main(
-    im_path="data/example_conditioning/superresolution/sample_0.jpg",
+    im1_path="data/textures/zebra.jpeg",
+    im2_path="data/textures/pattern-small.jpeg",
+    # im1_path="data/textures/franz-schekolin-IOiW0iGKwQg-unsplash.jpeg",
+    # im2_path="data/textures/v-srinivasan-h64wUnq6ZxM-unsplash.jpeg",
     ckpt="models/ldm/stable-diffusion-v1/sd-clip-vit-l14-img-embed_ema_only.ckpt",
     config="configs/stable-diffusion/sd-image-condition-finetune.yaml",
     outpath="im_variations",
@@ -95,7 +110,8 @@ def main(
     ):
 
     device = f"cuda:{device_idx}"
-    input_im = load_im(im_path).to(device)
+    input_im1 = load_im(im1_path).to(device)
+    input_im2 = load_im(im2_path).to(device)
     config = OmegaConf.load(config)
     model = load_model_from_config(config, ckpt, device=device)
 
@@ -111,7 +127,7 @@ def main(
     os.makedirs(sample_path, exist_ok=True)
     base_count = len(os.listdir(sample_path))
 
-    x_samples_ddim = sample_model(input_im, model, sampler, precision, h, w, ddim_steps, n_samples, scale, ddim_eta)
+    x_samples_ddim = sample_model(input_im1, input_im2, model, sampler, precision, h, w, ddim_steps, n_samples, scale, ddim_eta)
     for x_sample in x_samples_ddim:
         x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
         Image.fromarray(x_sample.astype(np.uint8)).save(
